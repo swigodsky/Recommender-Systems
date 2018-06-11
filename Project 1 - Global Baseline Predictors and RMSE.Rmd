@@ -161,7 +161,7 @@ Calculate the Percent Improvement in the RMSE for the Test Set
 
 ###Summary:
 I built a simple predictor system to predict a user's rating of a movie. The movie review data set was broken up into a training set and a testing set.  A crude predictor system entailed predicting each rating to be the mean of the user ratings for movies in the training set.  The root mean square error for the training set is 1.08 and the root mean square error for the testing set is 1.20.  This means that the average error between the predicted review and the actual review is a little over 1, which is fairly signficant since the rating system only ranges between 1 to 5.
-\n
+\n\
 The bias was then calculated for each reviewer and each movie by subtracting the mean rating from the mean rating for each reviewer and movie.  A baseline predictor for each movie for each reviewer was then built by adding the mean rating to the mean for each movie and reviewer.  The baseline predictions were a 29% improvement over the prediction based simply on the mean of the data for the training set.  However the baseline predictor produced predictions that were about 21% worse than the prediction based simply on the mean for the testing set.
-\n
+\n\
 This is not a successful predictor model.  I think a better predictor model could be built if there were more reviewers.  When 30% of the data was removed to create a testing set, there was very little data left to build a useful predictor model. 
