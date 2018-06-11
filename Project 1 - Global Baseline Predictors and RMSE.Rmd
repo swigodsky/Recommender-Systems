@@ -1,0 +1,172 @@
+---
+title: "DATA 643 Recommender Systems: Project 1 - Global Baseline Predictors and RMSE "
+author: "Sarah Wigodsky"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
+---
+
+The system recommends movies to viewers.  I asked 7 people to rate 9 movies and will make recommendations based on their reviews and try to predict their reviews.
+
+```{r load-libraries, echo=FALSE}
+suppressWarnings(suppressMessages(library(knitr)))
+```
+
+
+```{r input-data, echo=FALSE}
+#inputing movie reviews
+The_Help <- c(5,3,3,4,3,3, NA)
+Solo <- c(4,4,5,5,NA,NA, 4)
+Dr_Strangelove <- c(2,5,1,NA,NA,2,NA)
+Fantastic_Beasts <- c(3,3,3,3,NA,NA,5)
+Clue <- c(3,5,5,NA,NA,NA,5)
+Isle_of_Dogs <- c(NA,1,NA,5,5,NA,NA)
+Groundhog_Day <- c(5,5,3,4,4,4,5)
+Princess_Bride <- c(4,4,4,5,NA,NA,5)
+Goonies <- c(5,3,3,4,NA,NA,5)
+
+#reviews <- data.frame(list(The_Help,Solo,Dr_Strangelove,Fantastic_Beasts,Clue,Isle_of_Dogs,Groundhog_Day,Princess_Bride,Goonies), stringsAsFactors = FALSE)
+#colnames(reviews) <- c("The_Help","Solo","Dr_Strangelove","Fantastic_Beasts","Clue","Isle_of_Dogs","Groundhog_Day","Princess_Bride","Goonies")
+#rownames(reviews) <- c("Sarah","Nadav","Alon","Deena","Robin","David")
+
+reviews <- matrix(c(The_Help,Solo,Dr_Strangelove,Fantastic_Beasts,Clue,Isle_of_Dogs,Groundhog_Day,Princess_Bride,Goonies), nrow=7,ncol=9)
+colnames(reviews) <- c("The_Help","Solo","Dr_Strangelove","Fantastic_Beasts","Clue","Isle_of_Dogs","Groundhog_Day","Princess_Bride","Goonies")
+rownames(reviews) <- c("Sarah","Nadav","Alon","Deena","Robin","David","Dan")
+```
+
+The following table lists the names of the movies and the reviewers.  The reviews ranged from 1 to 5, where 1 is the lowest value and 5 is the greatest value.  Not every person has seen every movie, so there are some missing values.
+
+```{r printing-review-table, echo=FALSE}
+kable(reviews)
+```
+
+In order to create a predictor model, the data must be separated into a training set and a testing set.  Seventy percent of the data will be used for training and 30% of the data will be used for testing. The data taken for testing and training will be assigned randomly.
+
+```{r splitting-data, echo=FALSE}
+#entry_num <- nrow(reviews)*ncol(reviews)
+set.seed(1)
+entry_num <- length(reviews)
+training_num <- floor(.7*entry_num)
+random_nums <- sample(1:entry_num,training_num)
+
+train_reviews = reviews
+test_reviews = reviews
+for (i in 1:entry_num){
+  if (i %in% random_nums) 
+    test_reviews[i]=NA
+  else
+    train_reviews[i]=NA
+}
+```  
+
+The test data is:
+```{r printing-test-review-table, echo= FALSE}
+kable(test_reviews)
+```  
+
+The training data to build the recommender system is:
+```{r printing-training-review-table, echo= FALSE}
+kable(train_reviews)
+``` 
+
+To begin a system that can recommend a movie, the mean of the overall movie recommendations is found from the training set.
+```{r calc-mean, echo=FALSE}
+train_mean <- mean(train_reviews, na.rm=TRUE)
+train_mean
+```
+
+
+```{r RMSE-function, echo=FALSE}
+rmse <- function(df, mean_val){
+  diff <- df-mean_val
+  sq_diff <- diff^2
+  mean_val <- mean(sq_diff, na.rm=TRUE)
+  rmse <-sqrt(mean_val)
+  return(rmse)
+}  
+```
+
+Finding the RMSE (root mean square error) for the Training Data
+```{r rmse-train, echo=FALSE}
+rmse_train <- rmse(train_reviews,train_mean)
+rmse_train
+```
+
+Finding the RMSE (root mean square error) for the Testing Data
+```{r rmse-test, echo=FALSE}
+rmse_test <- rmse(test_reviews,train_mean)
+rmse_test
+```
+
+Calculate the Bias for Each Reviewer using the Training Data
+```{r bias-reviewer, echo=FALSE}
+user_bias_df <-data.frame(stringsAsFactors = FALSE)
+
+for (user in 1:nrow(train_reviews)){
+  mean_row <- mean(train_reviews[user,], na.rm=TRUE)
+  bias <- mean_row - train_mean 
+  user_bias_df <- rbind(user_bias_df, list(row.names(train_reviews)[user], bias), stringsAsFactors=FALSE)
+}
+colnames(user_bias_df) <- c("user_name", "bias")
+kable(user_bias_df)
+```
+
+Calculate the Bias for Each Movie using the Training Data
+
+```{r bias-movie, echo=FALSE}
+movie_bias_df <-data.frame(stringsAsFactors = FALSE)
+
+for (movie in 1:ncol(train_reviews)){
+  mean_col <- mean(train_reviews[,movie], na.rm=TRUE)
+  bias <- mean_col - train_mean 
+  movie_bias_df <- rbind(movie_bias_df, list(colnames(train_reviews)[movie],bias), stringsAsFactors=FALSE)
+  
+}
+colnames(movie_bias_df) <- c("movie_name", "bias")
+kable(movie_bias_df)
+```
+
+Calculate Baseline Predictors for Each User-Movie Combination
+
+```{r baseline-predictor, echo=FALSE}
+baseline_predictor <- reviews
+for (col_num in 1:ncol(baseline_predictor)){
+  movie_bias <- movie_bias_df$bias[col_num]
+  for (row_num in 1:nrow(baseline_predictor)){
+    user_bias <- user_bias_df$bias[row_num]
+    baseline_predictor[row_num,col_num] = train_mean + user_bias + movie_bias 
+  }
+}
+kable(baseline_predictor)
+```
+
+Calculate RMSE (root mean square error) for the Training Set
+```{r rmse-training-set, echo=FALSE}
+rmse_train_baseline <- rmse(train_reviews,baseline_predictor)
+rmse_train_baseline
+```
+
+Calculate RMSE (root mean square error) for the Test Set
+```{r rmse-test-set, echo=FALSE}
+rmse_test_baseline <- rmse(test_reviews,baseline_predictor)
+rmse_test_baseline
+```
+
+Calculate the Percent Improvement in the RMSE for the Training Set
+```{r, improvement, echo=FALSE}
+100*(1-rmse_train_baseline/rmse_train)
+```
+
+Calculate the Percent Improvement in the RMSE for the Test Set
+```{r, improvement, echo=FALSE}
+100*(1-rmse_test_baseline/rmse_test)
+```
+
+###Summary:
+I built a simple predictor system to predict a user's rating of a movie. The movie review data set was broken up into a training set and a testing set.  A crude predictor system entailed predicting each rating to be the mean of the user ratings for movies in the training set.  The root mean square error for the training set is 1.08 and the root mean square error for the testing set is 1.20.  This means that the error between the predicted review and the actual review is a little over 1, which is fairly signficant since the rating system obly goes from 1 to 5.
+\n
+The bias was then calculated for each reviewer and each movie by subtracting the mean rating from the mean rating for each reviewer and movie.  A baseline predictor for each movie for each reviewer was then built by adding the mean rating to the mean for each movie and reviewer.  The baseline predictions were a 29% improvement over the prediction based simply on the mean of the data for the training set.  However the baseline predictor produced predictions that were about 21% worse than the prediction based simply on the mean for the testing set.
+\n
+I think a better predictor model could be built if there were more reviwers.  When 30% of the data was removed to create a testing set, there was very little data left to build a useful predictor model. 
