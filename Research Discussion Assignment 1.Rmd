@@ -1,0 +1,23 @@
+---
+title: "Data 643 - Research Discussion Assignment 1"
+author: "Sarah Wigodsky"
+date: "June 11, 2018"
+output: html_document
+---
+
+###Choose one commercial recommender and describe how you think it works (content-based, collaborative filtering, etc). Does the technique deliver a good experience or are the recommendations off-target?
+
+The store Target has a hybrid recommender system.  For example, when clicking on a clothing item, I am given a suggestion of what guests who clicked on that item ultimately bought.  This is an example of collaborative filtering because the recommendation is based on other users with similar interests.  In addition, Target recommends similar items to those that I have clicked on.  This is a content-based recommendation.  When clicking on a shirt, Target suggests jewlery.  I think this is likely also a content based recommendation, as I surmise that the jewlery style is linked to the clothing style.  
+
+In general, I find Target's recommendations helpful.  It is helpful to see similar items and the items other customers ultimately bought. Even though I am not at all interested in buying jewlery from Target, when those items came up, I thought they looked cute, and that would have actually just encouraged me to buy the original item.  I feel a bit manipulated by that.  
+
+###Attacks on Recommender System
+Can you think of a similar example where a collective effort to alter the workings of content recommendations have been successful? How would you design a system to prevent this kind of abuse?
+
+I read the following article on NBC News about people giving Ivanka Trump's products negative reviews on Amazon because of poliltics.  https://www.nbcnews.com/business/consumer/amazon-reviewers-are-trolling-ivanka-trump-won-t-decide-her-n699181
+
+Many reviewers chose to target Ivanka on Amazon because of its volume of sales.  Many people wrote negative comments, but they are mostly  connected to politics and not to the products themselves.  Because of that, it does not seem to have had the desired negative affect.  
+
+This issue could be curtailed if Amazon required those writing a review to have purchased the product.  Because each item can have many reviews, it is challenging for Amazon to identify false reviews.  Amazon sues people who put out fake reviews.
+
+Since so many of the false reviews for Ivanka's products include negative comments about politics, it seems to me that the text of the reviews could be evaluated for content that does not pertain to the item being sold and that could be used to pull those recommendations off of their website.
