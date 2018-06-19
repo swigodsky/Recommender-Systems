@@ -1,0 +1,121 @@
+---
+title: "DATA 643 Recommender Systems Assignment 2"
+author: "Sarah Wigodsky"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: tactile
+    highlight: github
+---
+
+# Item Based and User Based Collaborative Filtering 
+
+I will build a recommender system to recommend jokes to users.  I am using the Jester Dataset, which is available at http://eigentaste.berkeley.edu/dataset/.
+
+```{r libraries, echo=FALSE}
+suppressWarnings(suppressMessages(library(tidyr)))
+suppressWarnings(suppressMessages(library(dplyr)))
+suppressWarnings(suppressMessages(library(recommenderlab)))
+suppressWarnings(suppressMessages(library(ggplot2)))
+```
+
+
+```{r download-jester-data, echo=FALSE}
+jester <- read.csv("https://raw.githubusercontent.com/swigodsky/Recommender-Systems/master/jesterdata.csv", header=FALSE, stringsAsFactors = FALSE)
+```
+
+The joke data set lists each user in a different row.  There are 100 jokes that are listed in columns and 23,500 different users.  The data frame is sparse, as each user did not rate every joke.  Each joke is rated from -10 to 10.  A joke that isn't rated is designated with a score of 99. \n\
+\n\
+The data frame needs to be tidied; the first column lists the number of jokes rated by each user.  That needs to be removed.  I removed the 99s and replaced them with NA.  Each column is labeled with the number of the joke it represents. \n\
+\n\
+The first 5 users' ratings of the first 10 jokes are shown below.
+
+```{r tidy, echo=FALSE}
+jester_tidy <- select(jester, -V1) #remove 1st column which contains the number of jokes the user rated
+jester_tidy[jester_tidy==99.00]<-NA #change 99.00 to NA since that represents a joke that wasn't rated
+coltitle <- seq(1,100,1)
+colnames(jester_tidy) <- coltitle
+jester_tidy[1:5,1:10]
+```
+
+The dataframe is stored as a realRatingMatrix, which supports the compact storage of sparce matrices.
+
+```{r matrix-class, echo=FALSE}
+set.seed(1)
+jester_matrix <- as(jester_tidy, "matrix") 
+jester_rating_matrix <- as(jester_matrix, "realRatingMatrix") #realRatingMatrix supports compact storage of sparse matrices
+```
+
+```{r visualization, echo=FALSE, warning=FALSE, message=FALSE}
+avg_ratings <- colMeans(jester_rating_matrix, na.rm=TRUE)
+num_ratings_per_joke <- colCounts(jester_rating_matrix)
+avg_ratings_relevant <- avg_ratings[num_ratings_per_joke>60] #only include jokes that were rated by more than 60 people
+qplot(avg_ratings_relevant) + stat_bin(binwidth=.1) + ggtitle("Distribution of Average Joke Rating for Jokes Rated by Over 60 People")
+```
+
+Most of the jokes that were rated by over 60 people, were given positive ratings.   
+
+#Training Set and Testing Set
+The data is first separated into a training set and testing set. The training set is 80% of the data and the test set is 20% of the data.
+
+#Item Based Collaborative Filtering - Cosine Similarity - k= 30
+An item-based collaborative filter recommends jokes based on the similarity between jokes  In the following model, the similarity between jokes is determined by calculating the cosine similarity of the jokes based on how the user rated them.
+
+```{r train-test, cache=TRUE, echo=FALSE}
+which_train <- sample(x=c(TRUE, FALSE), size=nrow(jester_rating_matrix),replace=TRUE, prob=c(0.8,0.2))
+train_set <- jester_rating_matrix[which_train,]
+test_set <- jester_rating_matrix[!which_train,]
+rec_model <- Recommender(data=train_set, method="IBCF",parameter=list(k=30, na_as_zero=FALSE))
+```
+
+```{r make-recommendation, cahce=TRUE, echo=FALSE}
+n_recommended <- 5 #number of jokes to recommend
+prediction <- predict(object = rec_model, newdata=test_set, n = n_recommended)
+prediction
+class(prediction)
+slotNames(prediction)
+prediction@items[1:10]
+```
+
+The list above shows the number of the 5 best recommended jokes for the first 10 users.  Users 2,4,5 and 7 have no recommendations.  Perhaps that is because the matrix is sparse so there is not enough data from enough users to make a prediction for those users.
+
+#Item Based Collaborative Filtering - Cosine Similarity - k = 60
+
+The following recommender system is built by identifying the 60 most similar jokes.  (The previous method built a recommender by indentifying the 30 most similar jokes.) The jokes recommended are different from the previous recommender.  Since this identifies more similar items, I would think that this recommendation would be more accurate.
+
+```{r ibck-k60, cache=TRUE, echo=FALSE}
+rec_model60 <- Recommender(data=train_set, method="IBCF",parameter=list(k=60))
+prediction60 <- predict(object = rec_model60, newdata=test_set, n = n_recommended)
+prediction60@items[1:10]
+```
+
+
+#User Based Collaborative Filtering - Cosine Similarity
+A user based collaborative filter recommends jokes that are most preferred by similar users.  The similarity between users is determined by the cosine similarity.  The prediction of the 5 best jokes for users is shown below.  There are no recommendations for users 2,4,5 and 7, which are the same users as before that did not get recommendations.
+
+
+```{r ubcf, cache=TRUE, echo=FALSE}
+rec_model_ubcf <- Recommender(data=train_set, method="UBCF")
+rec_model_ubcf
+getModel(rec_model_ubcf)
+predict_ubcf <- predict(object=rec_model_ubcf, newdata=test_set, n = n_recommended)
+predict_ubcf@items[1:10]
+```
+
+###Exploring Similiarity Between Users
+```{r similarity, echo=FALSE}
+similarity_users <- similarity(test_set[1:8,],method="cosine",which="users")
+image(as.matrix(similarity_users), main = "User Similarity in the Test Matrix")
+```
+
+To attempt to see what distinguishes users 2,4,5 and 7 in the test set from the other users in the test set, the above heat map represents users' similarities.  The more red the box, the greater the similarity between the two users.  User 2 is very similar to users 5,6 and 7.  User 4 is also very similar to 5, 6 and 7.  There is a link between those users for which there are no recommendations.Perhaps the data is too sparse to make  recommendations for users 2,4,5 and 7.  
+
+
+#User Based Collaborative Filtering - Pearson Similarity
+The following recommendations are made by looking at the Pearson similarity between users.  The joke recommendations are very similar for the first 10 users and still users 2,4,5 and 7 have no jokes recommended to them.
+
+```{r ubcf-pearson, cache=TRUE, echo=FALSE}
+rec_model_ubcf_p <- Recommender(data=train_set, method="UBCF", parameter = list(method="pearson"))
+predict_ubcf_p <- predict(object=rec_model_ubcf_p, newdata=test_set, n = n_recommended)
+predict_ubcf_p@items[1:10]
+```
