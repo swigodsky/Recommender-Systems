@@ -1,0 +1,182 @@
+---
+title: "DATA 643 Recommender Systems Assignment 3"
+author: "Sarah Wigodsky"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: tactile
+    highlight: github
+---
+
+# Matrix Factorization Methods
+
+I will build a recommender system to recommend movies to users.  I am using the MovieLens data set.\n\
+F. Maxwell Harper and Joseph A. Konstan. 2015. The MovieLens Datasets:
+History and Context. ACM Transactions on Interactive Intelligent
+Systems (TiiS) 5, 4, Article 19 (December 2015), 19 pages.
+DOI=http://dx.doi.org/10.1145/2827872
+
+```{r libraries, echo=FALSE}
+suppressWarnings(suppressMessages(library(tidyr)))
+suppressWarnings(suppressMessages(library(dplyr)))
+suppressWarnings(suppressMessages(library(recommenderlab)))
+suppressWarnings(suppressMessages(library(ggplot2)))
+suppressWarnings(suppressMessages(library(Matrix)))
+suppressWarnings(suppressMessages(library(irlba)))
+suppressWarnings(suppressMessages(library(reshape2)))
+suppressWarnings(suppressMessages(library(knitr)))
+```
+
+The list of ratings can be downloaded from http://files.grouplens.org/datasets/movielens/ml-100k/u.data  \n\
+\n\
+The list of movies titles and genres and can downloaded from
+http://files.grouplens.org/datasets/movielens/ml-100k/u.item
+
+```{r download-movie-data, echo=FALSE}
+movie <- read.csv("http://files.grouplens.org/datasets/movielens/ml-100k/u.data", header=FALSE, sep='\t',stringsAsFactors = FALSE)
+movie_title <- read.csv("http://files.grouplens.org/datasets/movielens/ml-100k/u.item", header=FALSE, sep='|',stringsAsFactors = FALSE)
+```
+
+The MovieLens data set has 943 users and 1682 movies.  The movie ratings range from 1 to 5. There are 100,000 ratings. \n\
+\n\
+The movies are rated as being in the following genres:   unknown, Action, Adventure, Animation, Children's, Comedy, Crime, Documentary, Drama, Fantasy,Film-Noir, Horror, Musical, Mystery, Romance, Sci-Fi, Thriller, War, Western \n\
+\n\
+
+The first 6 movies and their genres are shown below.  A one indicates that it is that genre, a zero indicates that it is not.
+
+```{r movie-titles, echo=FALSE}
+colnames(movie_title) <- c("movie_id","movie_name","release_date","vrelease_date","URL","unknown", "Action", "Adventure", "Animation", "Children's", "Comedy", "Crime", "Documentary", "Drama", "Fantasy", "Film-Noir",  "Horror", "Musical", "Mystery", "Romance", "Sci-Fi", "Thriller", "War", "Western")
+movie_title <- movie_title[,-(3:5)] #remove columns for release date, video release date and URL
+kable(head(movie_title))
+```
+
+The data frame needs to be organized differently.  The dcast command creates a row for each user and a column for each movie.  If a user did not rate a movie, a value of zero is inputted.  If the user rated the same movie more than once, the mean of the movie is taken. 
+\n\
+
+```{r tidy, echo=FALSE}
+colnames(movie) <- c("user_id","movie_id","rating","timestamp")
+movie$timestamp <- as.POSIXct(movie$timestamp, origin="1970-01-01") #convert UNIX time to ordinary date
+movie_df <- movie[,-4] #remove timestamp column
+#add movie name to the data frame
+movie_df <- 
+  select(movie_title, movie_id, movie_name) %>%
+  left_join(movie_df, movie_title, by="movie_id") #add movie titles
+movie_df <-movie_df[,-1] #remove movie_id column
+movie_wide <- dcast(movie_df, user_id~movie_name, value.var="rating", fill=0, fun.aggregate = mean)
+rownames(movie_wide) <- movie_wide$user_id
+movie_wide <- movie_wide[,-1]
+movie_matrix <- as(movie_wide, "matrix")
+kable(movie_matrix[1:5,1:5])
+```
+
+The dataframe will be stored as a realRatingMatrix, which supports the compact storage of sparce matrices.
+
+```{r matrix-class, echo=FALSE}
+set.seed(1)
+movie_rating_matrix <- as(movie_matrix, "realRatingMatrix") #realRatingMatrix supports compact storage of sparse matrices
+```
+
+###Similarity Between the First 10 users
+```{r similarity-users, echo=FALSE}
+similarity_users <- similarity(movie_rating_matrix[1:10,], method="cosine",which="users")
+similarity_users
+image(as.matrix(similarity_users), main = "User Similarity Among the First 10 Users")
+```
+
+The smaller the distances, the more related the users.  The more related the users, the more red the box appears.  It can be seen that user 1 is strongly related to users 3, 4 and 9.  User 2 is strongly related to users 5, 7 and 8.  User 3 is strongly related to users 1, 5, 6, 7, 8, 9 and 10.  User 4 is strongly related to 1, 5, 6, 7 and 10. Etc.
+
+
+###Similarity Between the First 6 movies 
+```{r similarity-movies, echo=FALSE}
+similarity_movies <- similarity(movie_rating_matrix[,1:10], method="cosine",which="items")
+similarity_movies
+image(as.matrix(similarity_movies), main = "Movie Similarity Among the First 10 Movies")
+```
+
+The heat map above displays the similarity between the first 10 movies. The movies that are the most different are 12 Angry Men and 2001: A Space Odyssey; 2001: A Space Odyssey and 20,000 Leagues Under the Sea.
+
+##Find Bias For Each Movie and User
+```{r bias, echo=FALSE}
+movie_matrixNA <- movie_matrix
+movie_matrixNA[movie_matrixNA==0] <- NA
+user_mean <- apply(movie_matrixNA,1,mean, na.rm=T)
+movie_mean <- apply(movie_matrixNA,2,mean, na.rm=T)
+total_mean <- mean(movie_matrixNA, na.rm=T)
+head(user_mean)
+kable(head(movie_mean))
+total_mean
+user_bias <- user_mean - total_mean
+movie_bias <- movie_mean - total_mean
+head(user_bias)
+kable(head(movie_bias))
+```
+
+The biases of movies and users was done by removing the values for movies that weren't rated by a user.  User 4 tends to rate movies with a high rating while user 3 tends to rate movies with lower ratings.  'Til There Was You is rated lower than most movies and 12 Angry Men was rated with higher than average ratings.  The mean rating for a movie is 3.529907.
+
+
+```{r RMSE-function, echo=FALSE}
+rmse <- function(movie_matrix, predictor){
+  movie_matrixNA <- movie_matrix
+  movie_matrixNA[movie_matrixNA==0] <- NA 
+  diff <- (movie_matrixNA-predictor)
+  sq_diff <- diff^2
+  mean_val <- mean(sq_diff, na.rm=TRUE)
+  rmse <-sqrt(mean_val)
+  return(rmse)
+}  
+```
+
+##Singular Value Decomposition (SVD) With Different Features 
+The irlba function was used to do singular value decomposition.  The number of features was changed from 2 to 20 and the root mean square error was calculated each time.
+
+```{r SVD, echo=FALSE}
+rmse_pnts <- rep(NA, 20)
+for (i in 2:20){
+  decomp <- irlba(movie_matrix, nu=i,nv=i)
+  irlba_predict <- user_mean + (decomp$u %*% sqrt(decomp$d) %*% sqrt(decomp$d) %*% t(decomp$v))
+  irlba_predict[irlba_predict>5] <- 5
+  irlba_predict[irlba_predict<1] <- 1
+  colnames(irlba_predict) <- colnames(movie_matrix)
+  rownames(irlba_predict) <- rownames(movie_matrix)
+  rmse_pnts[i] <- rmse(movie_matrix, irlba_predict)
+}
+plot(rmse_pnts, main = "RMSE for Different Numbers of Features", xlab="Number of Features", ylab = "RMSE")
+```
+
+
+The root mean square error is lowest for two features.  However that does not seem like a meaningful way to distinguish between different types of movies.  I will therefore choose 15 features, which has a relatively low RMSE, as the means on which to build a model.
+
+##Singular Value Decomposition (SVD) With 15 Features 
+```{r SVD15, echo=FALSE}
+decomp15 <- irlba(movie_matrix, nu=15,nv=15)
+irlba_predict15 <- user_mean + (decomp15$u %*% sqrt(decomp15$d) %*% sqrt(decomp15$d) %*% t(decomp15$v))
+irlba_predict15[irlba_predict15>5] <- 5  #cap the maximum rating at 5
+irlba_predict15[irlba_predict15<1] <- 1 #hold the minimum rating to 1  
+colnames(irlba_predict15) <- colnames(movie_matrix)
+rownames(irlba_predict15) <- rownames(movie_matrix)
+``` 
+
+##Rating Predictor
+The following function takes the number of a user and a movie title and returns the rating the user gave to the movie or the prediction of the rating.
+
+```{r rating-predictor, echo=FALSE}
+getRating <- function(user, movie){
+  if (movie_matrix[user,movie]!=0){
+    print('Already rated')
+    print(movie_matrix[user,movie])}
+  else {
+    predicted <- irlba_predict[user,movie] + movie_bias[movie]
+    predicted[predicted>5] <- 5  #cap the maximum rating at 5
+    predicted[predicted<1] <- 1 #hold the minimum rating to 1 
+    print(predicted)
+    }
+}
+getRating(1, "Toy Story (1995)")
+getRating(1, "Home Alone 3 (1997)")
+getRating(3, "Toy Story (1995)")
+getRating(3, "Home Alone 3 (1997)")
+```
+
+User 1 has already seen Toy Story and rated it a 5.  User 1 has not seen Home Alone 3 and probably wouldn't like it. \n\
+\n\
+User 3 has not seen Toy Story and would probably like it.  User 3 has not seen Home Alone 3 and probably wouldn't like it.
