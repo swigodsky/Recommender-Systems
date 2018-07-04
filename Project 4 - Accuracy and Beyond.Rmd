@@ -1,0 +1,336 @@
+---
+title: "DATA 643 Recommender Systems Assignment 4"
+author: "Sarah Wigodsky and Dan Wigodsky"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: tactile
+    highlight: github
+---
+
+<body style="background: 
+linear-gradient(13deg, #f1f2de 13%, transparent 43%) 3px 0, linear-gradient(63deg, transparent 24%, #e8faff 28%),linear-gradient(63deg, transparent 13%, #c6d7f2 29%, #f1f2de 18%, transparent 71%), #f1f2de;background-size: 7px 5px;">
+
+##Accuracy and Beyond 
+
+```{r libraries, echo=FALSE}
+suppressWarnings(suppressMessages(library(tidyr)))
+suppressWarnings(suppressMessages(library(dplyr)))
+suppressWarnings(suppressMessages(library(recommenderlab)))
+suppressWarnings(suppressMessages(library(ggplot2)))
+suppressWarnings(suppressMessages(library(Matrix)))
+suppressWarnings(suppressMessages(library(irlba)))
+suppressWarnings(suppressMessages(library(reshape2)))
+suppressWarnings(suppressMessages(library(knitr)))
+```
+
+We will build a recommender system to recommend books to users.  \n\
+\n\
+The data comes from the Book-Crossing data set, which is available here:  http://www2.informatik.uni-freiburg.de/~cziegler/BX/
+The data set was mined by Cai-Nicolas Ziegler, DBIS Freiburg. \n\
+\n\
+The data was collected by Cai-Nicolas Ziegler in a 4-week crawl (August / September 2004) from the Book-Crossing community with kind permission from Ron Hornbaker, CTO of Humankind Systems. Contains 278,858 users (anonymized but with demographic information) providing 1,149,780 ratings (explicit / implicit) about 271,379 books. 
+
+```{r download-datasets, echo=FALSE}
+books_df <- read.csv('https://raw.githubusercontent.com/swigodsky/Recommender-Systems/master/BX_books.csv', stringsAsFactors = FALSE, sep=",")
+users_df <- read.csv('https://raw.githubusercontent.com/swigodsky/Recommender-Systems/master/BX_users.csv', sep=",", stringsAsFactors = FALSE)
+ratings_df <- read.csv('https://raw.githubusercontent.com/swigodsky/Recommender-Systems/master/BX_book_ratings.csv', sep=",", stringsAsFactors = FALSE)
+```
+
+The book ratings range from 1-10, with higher values being a higher rating.  Books that weren't rated are designated with a zero value.  
+
+```{r tidying-data, echo=FALSE}
+books_df <- books_df[,1:3]
+books_df$Book.Author <- tolower(books_df$Book.Author)
+```
+
+There are 3 data frames.  The books data frame contains a list of books, ISBN, author and year of publication.
+```{r books, echo=FALSE, warning=FALSE}
+kable(head(books_df))
+books_df$ISBN<-gsub("N",12,books_df$ISBN,ignore.case = TRUE)
+books_df$ISBN<-gsub("X",39,books_df$ISBN,ignore.case = TRUE)
+books_df$ISBN<-gsub("B",22,books_df$ISBN,ignore.case = TRUE)
+books_df$ISBN<-gsub("L",33,books_df$ISBN,ignore.case = TRUE)
+books_df$ISBN<-gsub("D",44,books_df$ISBN,ignore.case = TRUE)
+books_df$ISBN<-as.numeric(books_df$ISBN)
+```
+
+The ratings data frame contains the user id, ISBN and book rating.  
+
+```{r ratings, echo=FALSE, warning=FALSE}
+ratings_df$ISBN<-gsub("N",12,ratings_df$ISBN,ignore.case = TRUE)
+ratings_df$ISBN<-gsub("X",39,ratings_df$ISBN,ignore.case = TRUE)
+ratings_df$ISBN<-gsub("B",22,ratings_df$ISBN,ignore.case = TRUE)
+ratings_df$ISBN<-gsub("L",33,ratings_df$ISBN,ignore.case = TRUE)
+ratings_df$ISBN<-gsub("D",44,ratings_df$ISBN,ignore.case = TRUE)
+ratings_df$ISBN<-as.numeric(ratings_df$ISBN)
+kable(head(ratings_df))
+```
+
+The data from the different data frames needs to be joined.  Some users recommended over 5000 books, which is implausible. Other users rated hardly any books. We filtered the data frame for users who rated between 150 and 225 books to make a meaningful recommender system and a matrix that was not too sparse.  
+
+
+```{r join, echo=FALSE}
+book_ratings <- 
+  left_join(books_df, ratings_df, by="ISBN") 
+book_ratings <- book_ratings[,-2]
+book_ratings <- book_ratings[which(book_ratings$Book.Rating!=0),]
+book_ratings_order <-
+  add_count(book_ratings, User.ID) 
+book_ratings_order <- 
+  arrange(book_ratings_order, desc(n))
+#write.csv(book_ratings_order, file="bookratingsorder.csv", row.names = TRUE, col.names = TRUE, sep='\t')
+book_ratings_order <- book_ratings_order[which(book_ratings_order$n>=150 & book_ratings_order$n<=225),]
+```
+
+The data frame needs to be arranged with each user as a different row and each column as a different book. 
+
+```{r dcast, echo=FALSE}
+book_ro <- book_ratings_order[,c(1,3,4)]
+book_wide <- dcast(book_ro, User.ID ~ ISBN, value.var="Book.Rating", fill=0, fun.aggregate = mean)
+rownames(book_wide) <- book_wide$User.ID
+book_wide<- book_wide[,-1]
+```
+
+
+```{r matrix, echo=FALSE}
+book_wideNA <- book_wide
+book_wideNA[book_wideNA==0] <- NA
+book_matrixNA <- as(book_wideNA, "matrix")
+```
+
+
+##Find Bias For Each User and Book
+```{r bias, echo=FALSE}
+user_mean <- apply(book_matrixNA,1,mean, na.rm=T)
+book_mean <- apply(book_matrixNA,2,mean, na.rm=T)
+total_mean <- mean(book_matrixNA, na.rm=T)
+user_bias <- user_mean - total_mean
+book_bias <- book_mean - total_mean
+head(user_bias)
+kable(head(book_bias))
+```
+
+##Break the Data into a Training Set and Testing Set
+80% of the data will be used to train and 20% of the data will be used to test.
+The data needs to be converted into a Real Rating Matrix.
+```{r train-test, cache=TRUE, echo=FALSE}
+set.seed(1)
+book_rating_matrix <- as(book_matrixNA, "realRatingMatrix")
+which_train <- sample(x=c(TRUE, FALSE), size=nrow(book_rating_matrix),replace=TRUE, prob=c(0.8,0.2))
+train_set <- book_rating_matrix[which_train,]
+test_set <- book_rating_matrix[!which_train,]
+```
+
+
+##User Based Collaborative Filtering - Cosine Similarity
+A user based collaborative filter recommends books that are most preferred by similar users.  The similarity between users is determined by the cosine similarity.  The prediction of the 5 best books for users is shown below.  
+
+
+```{r ubcf, cache=TRUE, echo=FALSE}
+rec_model_ubcf <- Recommender(data=train_set, method="UBCF")
+#rec_model_ubcf
+#getModel(rec_model_ubcf)
+book_recs <-list()
+predict_ubcf <- predict(object=rec_model_ubcf, newdata=test_set, n = 5)
+for(i in 1:10){
+  user_num <- rownames(test_set@data)[i]
+  recommended.items <- predict(rec_model_ubcf, test_set[user_num,], n=5)
+  book_recs[i] <- as(recommended.items, "list")
+}  
+print(book_recs)
+```
+
+
+```{r RMSE-function, echo=FALSE}
+rmse <- function(book_matrix, predictor){
+  book_matrixNA <- book_matrix
+  book_matrixNA[book_matrixNA==0] <- NA 
+  diff <- (book_matrixNA-predictor)
+  sq_diff <- diff^2
+  mean_val <- mean(sq_diff, na.rm=TRUE)
+  rmse <-sqrt(mean_val)
+  return(rmse)
+}  
+```
+
+##Singular Value Decomposition (SVD) With Different Features 
+The irlba function was used to do singular value decomposition.  The number of features was changed from 2 to 20 and the root mean square error was calculated each time.
+
+```{r SVD, echo=FALSE}
+rmse_pnts <- rep(NA, 20)
+book_matrix <- as(book_wide, "matrix")
+
+
+for (i in 2:20){
+  decomp <- irlba(book_matrix, nu=i,nv=i)
+  irlba_predict <- user_mean + (decomp$u %*% sqrt(decomp$d) %*% sqrt(decomp$d) %*% t(decomp$v))
+  irlba_predict[irlba_predict>10] <- 10
+  irlba_predict[irlba_predict<1] <- 1
+  colnames(irlba_predict) <- colnames(book_matrix)
+  rownames(irlba_predict) <- rownames(book_matrix)
+  rmse_pnts[i] <- rmse(book_matrix, irlba_predict)
+}
+plot(rmse_pnts, main = "RMSE for Different Numbers of Features", xlab="Number of Features", ylab = "RMSE")
+```
+
+##Singular Value Decomposition (SVD) With 10 Features 
+```{r SVD10, echo=FALSE}
+decomp8 <- irlba(book_matrix, nu=10,nv=10)
+irlba_predict8 <- user_mean + (decomp8$u %*% sqrt(decomp8$d) %*% sqrt(decomp8$d) %*% t(decomp8$v))
+irlba_predict8[irlba_predict8>10] <- 10  #cap the maximum rating at 10
+irlba_predict8[irlba_predict8<1] <- 1 #hold the minimum rating to 1  
+colnames(irlba_predict8) <- colnames(book_matrix)
+rownames(irlba_predict8) <- rownames(book_matrix)
+``` 
+
+##Rating Predictor
+The following function takes the number of a user and a book ISBN and returns the rating predicted from the SVD function.
+
+```{r rating-predictor, echo=FALSE}
+getRating <- function(user, book){
+  if (book_matrix[user,book]!=0){
+    print('Already rated')
+    print(book_matrix[user,book])}
+  else {
+    predicted <- irlba_predict[user,book] + book_bias[book]
+    predicted[predicted>10] <- 10  #cap the maximum rating at 10
+    predicted[predicted<1] <- 1 #hold the minimum rating to 1 
+    print(predicted)
+    }
+}
+for (i in 1:10){
+  user_num <- rownames(test_set@data)[i]
+  print(user_num)
+  book_list <- unlist(book_recs[i])
+  if (!is.na(book_list[2]))
+    for (j in 1:5)
+      getRating(user_num, book_list[j])
+}  
+```
+
+To corroborate and compare the UBCF to the SVD predictions, the SVD predictions are taking the first 10 users from the test set and calculating the ratings predicted for the 5 top books that were chosen by the User Based Collaborative Filtering.  As you can see, the ratings for the books the UBCF chose for each user are very high.  The lowest rating is about 7.8 and many ratings are 9 or 10.  This indicates that both models are giving similar results.
+
+```{r ubcf-variety, cache=TRUE, echo=FALSE}
+rec_model_ubcf <- Recommender(data=train_set, method="UBCF")
+predict_ubcf <- predict(object=rec_model_ubcf, newdata=test_set, n = 2)
+raw.20<-unlist(predict_ubcf@items[2])
+```  
+
+##Diversity
+In order to build diversity into the recommendation system, we will compare the similarity between books.  We will recommend a book that is most disimilar to another book.  To start, let's look at the first 10 books and first 10 users.
+
+```{r similarity, echo=FALSE}
+similarity_book <- similarity(train_set[,1:10], method="cosine",which="items")
+image(as.matrix(similarity_book), main = "Book Similarity For the First 10 Books")
+similarity_users <- similarity(train_set[1:10,], method="cosine",which="users")
+image(as.matrix(similarity_users), main = "User Similarity Among the First 10 Users")
+```
+
+Let's focus on user 6543. We start with 20 books suggested by our UBCF method.  The similarity for some sets of are below in graphical and numeric forms.
+  
+```{r ubcf-new, cache=TRUE, echo=FALSE}
+rec_model_ubcf <- Recommender(data=train_set, method="UBCF")
+for(i in 1:1){
+  user_num <- rownames(test_set@data)[i]
+  recommended.items <- predict(rec_model_ubcf, test_set[user_num,], n=5)
+  book_recs <- as(recommended.items, "list")
+  print(book_recs)
+}  
+recommended.items.wide <- predict(rec_model_ubcf, test_set[rownames(test_set@data)[2],], n=20)
+book_recs_wide <- as(recommended.items.wide, "list")
+book_recs_wide[1]
+book_recs_wide<-as.matrix(book_recs_wide[1])
+
+raw.model.for.top.20<-as.matrix(book_wideNA[,unlist(book_recs_wide)])
+raw.model.for.top.20<-as(raw.model.for.top.20,"realRatingMatrix")
+similarity_raw.model.for.top.20 <- similarity(raw.model.for.top.20, method="cosine",which="items")
+image(as.matrix(similarity_raw.model.for.top.20), main = "Book Similarity For user 6543-20 picks")
+similarity_raw.model.for.mid7 <- similarity(raw.model.for.top.20[,7:14], method="cosine",which="items")
+image(as.matrix(similarity_raw.model.for.mid7), main = "Book Similarity For user 6543-picks 7 to 14")
+similarity_raw.model.for.white <- similarity(raw.model.for.top.20[,c(2,4,6,15,16)], method="cosine",which="items")
+image(as.matrix(similarity_raw.model.for.white), main = "Book Similarity For user 6543-picks 7 to 14")
+similarity_raw.model.for.top.20
+```  
+
+
+We create 500 random models with the intention of keeping the books with the furthest cosine distance to offer a diversity of suggestions to users.  The higher the cosine similarity, the less related the books and the yellower the image appears.  
+  
+```{r ubcf-choose, cache=TRUE, echo=FALSE}
+n<-c(1:20)
+set.seed(172)
+sum.cosine<-70
+for(i in 1:500){
+r<-sample(n,size=5,replace = F)
+r
+similarity_raw.model.sample <- similarity(raw.model.for.top.20[,r], method="cosine",which="items")
+
+if(sum(similarity_raw.model.sample,na.rm = T)< sum.cosine){
+  sum.cosine<-sum(similarity_raw.model.sample,na.rm = T)
+  isbn.choices<-r
+                                                             }
+
+               }
+```
+
+```{r ubcf-choose2, cache=TRUE, echo=FALSE}
+similarity_most.variety <- similarity(raw.model.for.top.20[,unlist(isbn.choices)], method="cosine",which="items")
+image(as.matrix(similarity_most.variety), main = "Book Similarity For user 6543-most different")
+```
+
+We will predict 5 books for user 6543 by choosing books that are most dissimilar to that user's previous book ratings.  Because the data is so sparse, we chose to interpret NA as an indication of dissimilarity.  Most of the calculated similarities were close to 1 because the data is sparse and many are too far apart to calculate.  The following are the indices of the books chosen.
+
+
+```{r ubcf-choose3, cache=TRUE, echo=FALSE}
+as.matrix(similarity_most.variety)
+```
+
+The following are the ISBN, book names and authors for these recommendations for the books chosen.
+
+```{r ubcf-choose4, cache=TRUE, echo=FALSE}
+#isbn.choices
+kable(model.from.top.20<-head(as.matrix(book_wideNA[,unlist(isbn.choices)])))
+```  
+
+  
+```{r ubcf-titles-from-20, cache=TRUE, echo=FALSE}
+books.model.from.top.20<-colnames(model.from.top.20)
+final.model.from.top.20<-as.matrix(books_df[which(books_df$ISBN %in% books.model.from.top.20),])
+final.model.from.top.20
+print("Thriftbooks.com reviews or descriptions of the diverse recommendations for user 6543:")
+print("------------------------------------------------------------")
+print("At times lyrical, this first novel of Lewis DeSoto begins with a great deal of potential. Here are two women who have lost--parents, husband. Here are two women in apartheid South Africa, one black and one white. DeSoto describes grief poignantly without being over the top, but he fails on two points: his dialogue is wooden and he often isn't as subtle as he could be, pointing out his lyricism to the reader too blatantly.")  
+print("------------------------------------------------------------")
+print("Beginning with his discovery of evidence that suggests that his wife and daughter were murdered to cover up a heroin smuggling operation, Bahamian hotel owner Thomas Mangan becomes convinced that someone is trying to destroy the Bahamian economy.")
+print("------------------------------------------------------------")
+print("As a children's novel, this book is entirely successful. The plot is compelling, the characters are well-drawn, and it allows in just enough chaos and evil to make the final triumph of order and good truly satisfying. I have dozens of children's novels on my shelves with the same qualifications, but very few of them do I reread with the same frequency and pleasure as I reread both Tales of Alderley.")
+print("------------------------------------------------------------")
+print("Sharon Butala has written a deeply personal book with universal application. She tells of her journey from a fulfilling but hectic urban life to one of isolation and introspection. She joins her new husband on a cattle ranch in southwest Saskatchewan and leaves behind her university teaching, her graduate studies, her support network of feminist friends, and her teenaged son.")
+```  
+
+The books recommended by the UBCF for user 6543 are different from the books chosen to add an element of diversity.  The reviews shown above indicate that there is a real diversity among these choices.  Accuracy fell for the diverse model.  The original model was optimized mathematically.  Substituting more diverse books caused us to choose picks that were not as optimal.  As a result, the accuracy was slightly lower.
+
+
+  
+When we look at our user based collaborative filtering model, our ROC curve shows almost a straight line.  Our model is not performing well.  It also approaches .06 instead of 1.  We think this is because of the sparsity of our data.  The precision-recall curve drops off suddenly and then has a maximum later.  Both precision and recall are small.  This is also owing to the sparsity of the data.  As more ratings come in for books, the dataframe would become less sparse.  
+  
+```{r ubcf-ROC-Curve, cache=TRUE, echo=FALSE}
+rec_model_ubcf <- Recommender(data=train_set, method="UBCF")
+predict_ubcf <- predict(object=rec_model_ubcf, newdata=test_set, n = 5)
+#predict_ubcf@items[1:10]
+percentage_training<-.85
+items_to_keep<-36
+n_eval<-1
+rating_threshold<-5
+eval_sets<-evaluationScheme(data=book_rating_matrix,method="split",train=percentage_training,given=items_to_keep,k = n_eval,goodRating=rating_threshold)
+results_item<-evaluate(x=eval_sets,method = "UBCF",n=seq(102,1602,50))
+results_item
+plot(results_item,annotate=FALSE,main="ROC curve")
+plot(results_item,"prec/rec", annotate=FALSE, main="Precision-recall")
+```  
+  
+&emsp;If our model were online, we could evaluate it in a more robust manner.  Each method could be accompanied by A/B testing to find out how our user would respond to each type of system.  We would want to find out how a user responds to our recommendation.  We could see if users come back more often when given different types of recommendations.  Our data is quite sparse.  We eliminated users who rated few books so that our model could be small enough to run.  We could test which books might be most useful in order to have a smaller, more efficiently running model.  We could learn which books have the most engagement.  Which suggestions cause a user to buy; to spend more time on our site learning about the book?  We could track users to find out how often they visit and how many recommendations they come back for.  We could also find out which suggestions are clicked along with others.  That might provide a new cosine distance measure for book similarity.  With this, and most of our methods, we will have a cold start problem because of the sparsity of our data.  We could use methods to try to get the users to rate more books.  Perhaps a secondary recommender system could recommend books to ask a user to rate so the most sparse areas could be filled in.  
+  
+  
+Sources:https://medium.com/recombee-blog/evaluating-recommender-systems-choosing-the-best-one-for-your-business-c688ab781a35  
+&emsp;https://talkroute.com/online-marketing-terms-decoded-seo-ctr-roi-and-all-the-rest/
